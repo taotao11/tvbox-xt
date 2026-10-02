@@ -39,35 +39,40 @@ class VideoSniffer:
         self.pw=await async_playwright().start()
         self.browser=await self.pw.chromium.launch(headless=False)
         self.page=await self.browser.new_page()
-
-        async def on_response(response):
-            try:
-                ctype=response.headers.get("content-type","")
-                if not looks_like_media(response.url,ctype): return
-                headers=dict(response.request.headers)
-                title=clean_title(await self.page.title())
-                event={
-                    "title":title,"category":classify(title,self.page.url),
-                    "page_url":self.page.url,"url":response.url,
-                    "stream_type":"m3u8" if ".m3u8" in response.url.lower() else ("mpd" if ".mpd" in response.url.lower() else "media"),
-                    "referer":headers.get("referer",""),
-                    "user_agent":headers.get("user-agent",""),
-                    "headers":{k:v for k,v in headers.items() if k.lower() in {"referer","origin","user-agent","cookie"}}
-                }
-                await self.events.put(event)
-            except Exception:
-                pass
-
-        self.page.on("response",on_response)
+        self.page.on("response", self._on_response)
         await self.page.goto("about:blank")
 
+    async def _on_response(self, response):
+        try:
+            ctype=response.headers.get("content-type","")
+            if not looks_like_media(response.url,ctype):
+                return
+            headers=dict(response.request.headers)
+            title=clean_title(await self.page.title())
+            event={
+                "title":title,
+                "category":classify(title,self.page.url),
+                "page_url":self.page.url,
+                "url":response.url,
+                "stream_type":"m3u8" if ".m3u8" in response.url.lower() else ("mpd" if ".mpd" in response.url.lower() else "media"),
+                "referer":headers.get("referer",""),
+                "user_agent":headers.get("user-agent",""),
+                "headers":{k:v for k,v in headers.items() if k.lower() in {"referer","origin","user-agent","cookie"}}
+            }
+            await self.events.put(event)
+        except Exception:
+            pass
+
     async def browse(self,url):
-        if not self.page: raise RuntimeError("sniffer not started")
+        if not self.page:
+            raise RuntimeError("sniffer not started")
         await self.page.goto(url,wait_until="domcontentloaded",timeout=30000)
 
     async def next_event(self):
         return await self.events.get()
 
     async def stop(self):
-        if self.browser: await self.browser.close()
-        if self.pw: await self.pw.stop()
+        if self.browser:
+            await self.browser.close()
+        if self.pw:
+            await self.pw.stop()
