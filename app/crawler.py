@@ -8,11 +8,7 @@ from playwright.async_api import Page
 
 
 class SiteCrawler:
-    """Same-domain crawler for sites the operator is authorized to crawl.
-
-    It discovers internal HTML links, follows pagination/detail pages and lets
-    VideoSniffer capture media requests from every visited page.
-    """
+    """Same-domain crawler for sites the operator is authorized to crawl."""
 
     def __init__(self, sniffer):
         self.sniffer = sniffer
@@ -40,8 +36,28 @@ class SiteCrawler:
                 out.append(link)
         return list(dict.fromkeys(out))
 
+    async def trigger_video_players(self, page: Page):
+        # Only triggers ordinary HTML5 players; it does not bypass DRM or access controls.
+        try:
+            await page.locator("video").evaluate_all(
+                """els => els.forEach(v => {
+                    try { const p=v.play(); if (p && p.catch) p.catch(()=>{}); } catch(e) {}
+                })"""
+            )
+        except Exception:
+            pass
+        try:
+            await page.locator(
+                "button[aria-label*='play' i],button[title*='play' i],"
+                "[role='button'][aria-label*='play' i]"
+            ).evaluate_all(
+                """els => els.slice(0,5).forEach(e => { try { e.click(); } catch(x) {} })"""
+            )
+        except Exception:
+            pass
+
     async def crawl(self, start_url: str, max_pages: int = 1000,
-                    max_depth: int = 20, delay_ms: int = 150):
+                    max_depth: int = 20, delay_ms: int = 250):
         start_url = self.normalize(start_url)
         root = start_url
         queue = deque([(start_url, 0)])
@@ -58,7 +74,7 @@ class SiteCrawler:
                 self.stats["visited"] = len(seen)
                 try:
                     await self.sniffer.browse(url)
-                    # Give client-side routers/video players time to issue requests.
+                    await self.trigger_video_players(self.sniffer.page)
                     await asyncio.sleep(max(delay_ms, 0) / 1000)
                     links = await self.extract_links(self.sniffer.page, root)
                     for link in links:
